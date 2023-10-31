@@ -1,0 +1,18 @@
+# Archivos generados por Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Entornos virtuales de Python
+venv/
+env/
+*.env
+
+# Archivos de registro
+*.log
+
+# Directorios y archivos generados por tu entorno de desarrollo (pueden variar)
+.idea/
+.vscode/
+__init__.py
