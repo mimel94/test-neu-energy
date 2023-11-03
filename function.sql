@@ -42,16 +42,15 @@ BEGIN
 	EA := total_consumption * cu_tariffs;
 
     IF total_injection <= total_consumption THEN
-        -- Tarifa CU negativa
         EE1 := total_injection * (-cu_tariffs);
 	END IF;
     IF total_injection > total_consumption THEN
-        -- Tarifa CU negativa
+
         EE1 := total_consumption * (-cu_tariffs);
     END IF;
 
 	IF total_injection <= total_consumption THEN
-        EE2 := 0; -- EE2 es igual a cero si la inyección es menor o igual al consumo
+        EE2 := 0;
     ELSE
 		SELECT SUM((c.value - i.value) * b.value)
 		INTO EE2_tariff
@@ -68,7 +67,6 @@ BEGIN
     FROM tariffs
     WHERE id_market = (SELECT id_market FROM services WHERE id_service = service_id)
     AND voltage_level = voltage_level_var;
-	RAISE NOTICE 'total_injection: %, c_tariffs: %', total_injection, c_tariffs;
 	EC := total_injection * c_tariffs;
 
     RETURN;
