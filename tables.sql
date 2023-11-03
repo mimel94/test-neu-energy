@@ -24,17 +24,15 @@ CREATE TABLE xm_data_hourly_per_agent (
 );
 
 CREATE TABLE records (
-    id_record INT PRIMARY KEY,
+    id_record INT,
     id_service INT,
     record_timestamp TIMESTAMP
 );
-
 
 CREATE TABLE consumption (
     id_record INT,
     value FLOAT
 );
-
 
 CREATE TABLE injection (
     id_record INT,
