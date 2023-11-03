@@ -1,86 +1,89 @@
-import psycopg2
-
-from connection import connect_to_database
+import pandas as pd
 
 
-class calculate_energy_bill:
+class DataService:
     def __init__(self):
-        self.connection = None
+        self.consumption = pd.read_csv('dataframes/consumption.csv')
+        self.records = pd.read_csv('dataframes/records.csv')
+        self.injection = pd.read_csv('dataframes/injection.csv')
+        self.services = pd.read_csv('dataframes/services.csv')
+        self.tariffs = pd.read_csv('dataframes/tariffs.csv')
+        self.xm_data_hourly_per_agent = pd.read_csv('dataframes/xm_data_hourly_per_agent.csv')
 
-    def connect_to_database(self):
-        self.connection = connect_to_database()
 
-    def disconnect_from_database(self):
-        if self.connection:
-            self.connection.close()
+class EnergyCalculator:
 
-    def calculate_energy_bill(self):
-        try:
-            cur = self.connection.cursor()
+    @staticmethod
+    def calculate_energy_bill(data, id_service):
+        EE2 = 0
+        service_data = data.services[data.services['id_service'] == id_service]
+        voltage_level_var = service_data['voltage_level'].values[0]
 
-            cur.execute("""
-                SELECT SUM(c.value)
-                FROM consumption c
-                JOIN records r ON c.id_record = r.id_record
-                JOIN services s ON r.id_service = s.id_service
-                WHERE s.voltage_level IN (2, 3) 
-            """)
-            total_consumption = cur.fetchone()[0]
+        consumption = data.consumption[
+            data.consumption['id_record'].isin(data.records[data.records['id_service'] == id_service]['id_record'])]
 
-            cur.execute("""
-                SELECT SUM(i.value)
-                FROM injection i
-                JOIN records r ON i.id_record = r.id_record
-                JOIN services s ON r.id_service = s.id_service
-                WHERE s.voltage_level IN (2, 3) 
-            """)
-            total_injection = cur.fetchone()[0]
+        if voltage_level_var in [2, 3]:
+            cu_tariff = data.tariffs[data.tariffs['voltage_level'].isin([2, 3])]['CU'].values[0]
+        else:
+            cu_tariff = data.tariffs[
+                (data.tariffs['id_market'] == service_data['id_market'].values[0]) &
+                (data.tariffs['cdi'] == service_data['cdi'].values[0]) &
+                (data.tariffs['voltage_level'] == voltage_level_var)
+                ]['CU'].values[0]
 
-            cur.execute("SELECT CU, C FROM tariffs WHERE voltage_level IN (2, 3) AND cdi IS NULL")
-            cu_tariffs, c_tariffs = cur.fetchone()
+        total_consumption = consumption['value'].sum()
+        EA = total_consumption * cu_tariff
+        injection = data.injection[
+            data.injection['id_record'].isin(data.records[data.records['id_service'] == id_service]['id_record'])]
+        total_injection = injection['value'].sum()
 
-            EA = total_consumption * cu_tariffs
-            EC = total_injection * c_tariffs
+        if total_injection <= total_consumption:
+            EE1 = total_injection * (-cu_tariff)
+        else:
+            EE1 = total_consumption * (-cu_tariff)
 
-            if total_injection <= total_consumption:
-                EE1 = total_injection * (-cu_tariffs)
-                EE2 = 0
-            else:
-                EE1 = total_consumption * (-cu_tariffs)
+        if total_injection <= total_consumption:
+            EE2 = 0
+        else:
+            consumption_difference = consumption['value'].sub(injection['value'], fill_value=0)
+            relevant_hours = data.xm_data_hourly_per_agent[
+                data.xm_data_hourly_per_agent['record_timestamp'].isin(
+                    data.records[data.records['id_service'] == id_service]['record_timestamp']
+                )]
 
-                if total_injection > total_consumption:
-                    cur.execute("""
-                        SELECT SUM((i.value - %s) * b.value)
-                        FROM injection i
-                        JOIN xm_data_hourly_per_agent b ON i.record_timestamp = b.record_timestamp
-                        JOIN records r ON i.id_record = r.id_record
-                        JOIN services s ON r.id_service = s.id_service
-                        WHERE i.value > %s AND s.voltage_level IN (2, 3)
-                    """, (total_consumption, total_consumption))
-                    EE2_tariff = cur.fetchone()[0]
-                    EE2 = EE2_tariff
-                else:
-                    EE2 = 0
+            if not relevant_hours.empty:
+                consumption_difference = (consumption_difference[consumption_difference > 0] - total_injection).sum()
+                EE2 = (consumption_difference * relevant_hours['value']).sum()
 
-            return {
-                "Energía Activa (EA)": EA,
-                "Excedentes de Energía Tipo 1 (EE1)": EE1,
-                "Excedentes de Energía Tipo 2 (EE2)": EE2,
-                "Comercialización de Excedentes de Energía (EC)": EC
-            }
+        c_tariff = data.tariffs[
+            (data.tariffs['id_market'] == service_data['id_market'].values[0]) &
+            (data.tariffs['voltage_level'] == voltage_level_var)
+            ]['C'].values[0]
 
-        except (psycopg2.Error, Exception) as error:
-            print("Error:", error)
-            return None
+        EC = total_injection * c_tariff
+        results = pd.DataFrame({'id_service': id_service, 'EA': [EA], 'EE1': [EE1], 'EE2': [EE2], 'EC': [EC]})
+
+        return results
+
+    @staticmethod
+    def print_results(result_dataframe):
+        print(result_dataframe)
+
+    def calculate_energy_bills_for_all_services(self, data):
+        service_ids = data.services['id_service'].unique()
+        results = []
+
+        for service_id in service_ids:
+            result_dataframe = self.calculate_energy_bill(data, service_id)
+            if result_dataframe is not None:
+                results.append(result_dataframe)
+
+        return pd.concat(results)
 
 
 if __name__ == '__main__':
-    bill = calculate_energy_bill()
-    bill.connect_to_database()
-    result = bill.calculate_energy_bill()
-    bill.disconnect_from_database()
-
-    if result is not None:
-        for type, value in result.items():
-            print(f"{type}: {value}")
+    data = DataService()
+    calculator = EnergyCalculator()
+    results_dataframe = calculator.calculate_energy_bills_for_all_services(data)
+    calculator.print_results(results_dataframe.sort_values(by='id_service'))
 
